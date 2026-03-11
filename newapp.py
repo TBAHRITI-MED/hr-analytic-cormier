@@ -252,28 +252,37 @@ def train_models(X, y):
     X_test_scaled = scaler.transform(X_test)
     
     # Rééquilibrage avec SMOTE
-    smote = SMOTE(random_state=42, sampling_strategy=0.6)
+    smote = SMOTE(random_state=42, sampling_strategy=0.7)
     X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
     
     models = {
         'Random Forest': RandomForestClassifier(
-            n_estimators=300, random_state=42, class_weight='balanced',
-            max_depth=12, min_samples_leaf=3
+            n_estimators=500, random_state=42, class_weight='balanced_subsample',
+            max_depth=10, min_samples_leaf=2, min_samples_split=4,
+            max_features='sqrt', bootstrap=True
         ),
         'Gradient Boosting': GradientBoostingClassifier(
-            n_estimators=300, random_state=42, learning_rate=0.05,
-            max_depth=4, subsample=0.8
+            n_estimators=500, random_state=42, learning_rate=0.03,
+            max_depth=4, subsample=0.8, min_samples_leaf=4,
+            max_features='sqrt', n_iter_no_change=20
         ),
         'Logistic Regression': LogisticRegression(
-            random_state=42, class_weight='balanced', max_iter=2000, C=0.1
+            random_state=42, class_weight='balanced', max_iter=3000, C=0.05,
+            solver='saga', penalty='l1'
         )
     }
     
     results = {}
     for name, model in models.items():
         model.fit(X_train_resampled, y_train_resampled)
-        y_pred = model.predict(X_test_scaled)
         y_proba = model.predict_proba(X_test_scaled)[:, 1]
+        
+        # Seuil optimisé par F1
+        prec_arr, rec_arr, thresholds = precision_recall_curve(y_test, y_proba)
+        f1_scores = 2 * prec_arr * rec_arr / (prec_arr + rec_arr + 1e-8)
+        best_idx = np.argmax(f1_scores)
+        best_threshold = thresholds[min(best_idx, len(thresholds) - 1)]
+        y_pred = (y_proba >= best_threshold).astype(int)
         
         results[name] = {
             'model': model,
@@ -282,7 +291,8 @@ def train_models(X, y):
             'accuracy': accuracy_score(y_test, y_pred),
             'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred),
-            'f1': f1_score(y_test, y_pred)
+            'f1': f1_score(y_test, y_pred),
+            'threshold': best_threshold
         }
     
     return results, X_train, X_test, y_train, y_test, scaler
