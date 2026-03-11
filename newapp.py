@@ -23,6 +23,7 @@ from sklearn.metrics import (
     classification_report, confusion_matrix, roc_curve, auc,
     precision_recall_curve, accuracy_score, precision_score, recall_score, f1_score
 )
+from imblearn.over_sampling import SMOTE
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -193,6 +194,16 @@ def preprocess_data(df):
     # Conversion de la variable cible
     df_processed['Attrition_Binary'] = (df_processed['Attrition'] == 'Yes').astype(int)
     
+    # Feature engineering
+    df_processed['OT_Binary'] = (df_processed['OverTime'] == 'Yes').astype(int)
+    df_processed['Single'] = (df_processed['MaritalStatus'] == 'Single').astype(int)
+    df_processed['Income_per_Year'] = df_processed['MonthlyIncome'] / (df_processed['TotalWorkingYears'] + 1)
+    df_processed['Years_Since_Promo_Ratio'] = df_processed['YearsSinceLastPromotion'] / (df_processed['YearsAtCompany'] + 1)
+    df_processed['Satisfaction_Avg'] = (df_processed['JobSatisfaction'] + df_processed['EnvironmentSatisfaction'] + df_processed['RelationshipSatisfaction'] + df_processed['WorkLifeBalance']) / 4
+    df_processed['Young_New'] = ((df_processed['Age'] < 30) & (df_processed['YearsAtCompany'] < 3)).astype(int)
+    df_processed['No_StockOption'] = (df_processed['StockOptionLevel'] == 0).astype(int)
+    df_processed['Travel_Freq'] = (df_processed['BusinessTravel'] == 'Travel_Frequently').astype(int)
+    
     # Encodage des variables catégorielles
     le_dict = {}
     categorical_cols = df_processed.select_dtypes(include=['object']).columns
@@ -209,14 +220,16 @@ def preprocess_data(df):
 def create_feature_matrix(df_processed):
     """Crée la matrice de features pour le ML"""
     feature_cols = [
-        'Age', 'DailyRate', 'DistanceFromHome', 'Education', 'EnvironmentSatisfaction',
-        'HourlyRate', 'JobInvolvement', 'JobLevel', 'JobSatisfaction', 'MonthlyIncome',
-        'MonthlyRate', 'NumCompaniesWorked', 'PercentSalaryHike', 'PerformanceRating',
+        'Age', 'DistanceFromHome', 'Education', 'EnvironmentSatisfaction',
+        'JobInvolvement', 'JobLevel', 'JobSatisfaction', 'MonthlyIncome',
+        'NumCompaniesWorked', 'PercentSalaryHike', 'PerformanceRating',
         'RelationshipSatisfaction', 'StockOptionLevel', 'TotalWorkingYears',
         'TrainingTimesLastYear', 'WorkLifeBalance', 'YearsAtCompany',
         'YearsInCurrentRole', 'YearsSinceLastPromotion', 'YearsWithCurrManager',
-        'BusinessTravel_Encoded', 'Department_Encoded', 'EducationField_Encoded',
-        'Gender_Encoded', 'JobRole_Encoded', 'MaritalStatus_Encoded', 'OverTime_Encoded'
+        'Department_Encoded', 'EducationField_Encoded',
+        'Gender_Encoded', 'JobRole_Encoded', 'MaritalStatus_Encoded', 'OverTime_Encoded',
+        'OT_Binary', 'Single', 'Income_per_Year', 'Years_Since_Promo_Ratio',
+        'Satisfaction_Avg', 'Young_New', 'No_StockOption', 'Travel_Freq'
     ]
     
     available_cols = [col for col in feature_cols if col in df_processed.columns]
@@ -226,39 +239,59 @@ def create_feature_matrix(df_processed):
     return X, y, available_cols
 
 
+def _find_best_threshold(y_true, y_proba):
+    """Trouve le seuil de décision qui maximise le F1-Score"""
+    prec, rec, thresholds = precision_recall_curve(y_true, y_proba)
+    f1_scores = 2 * prec * rec / (prec + rec + 1e-8)
+    best_idx = np.argmax(f1_scores)
+    return thresholds[min(best_idx, len(thresholds) - 1)]
+
+
 def train_models(X, y):
     """Entraîne plusieurs modèles et retourne les résultats"""
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
+    # Standardisation des données
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
+    # Rééquilibrage avec SMOTE (ratio partiel pour éviter le sur-ajustement)
+    smote = SMOTE(random_state=42, sampling_strategy=0.6)
+    X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
+    
     models = {
-        'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'),
-        'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
-        'Logistic Regression': LogisticRegression(random_state=42, class_weight='balanced', max_iter=1000)
+        'Random Forest': RandomForestClassifier(
+            n_estimators=300, random_state=42,
+            max_depth=10, min_samples_split=5, min_samples_leaf=3
+        ),
+        'Gradient Boosting': GradientBoostingClassifier(
+            n_estimators=300, random_state=42, learning_rate=0.05,
+            max_depth=3, subsample=0.8, min_samples_leaf=5
+        ),
+        'Logistic Regression': LogisticRegression(
+            random_state=42, class_weight='balanced', max_iter=2000, C=0.1
+        )
     }
     
     results = {}
     for name, model in models.items():
-        if name == 'Logistic Regression':
-            model.fit(X_train_scaled, y_train)
-            y_pred = model.predict(X_test_scaled)
-            y_proba = model.predict_proba(X_test_scaled)[:, 1]
-        else:
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            y_proba = model.predict_proba(X_test)[:, 1]
+        model.fit(X_train_resampled, y_train_resampled)
+        y_proba = model.predict_proba(X_test_scaled)[:, 1]
+        
+        # Seuil optimisé par maximisation du F1-Score
+        best_threshold = _find_best_threshold(y_test, y_proba)
+        y_pred = (y_proba >= best_threshold).astype(int)
         
         results[name] = {
             'model': model,
             'y_pred': y_pred,
             'y_proba': y_proba,
             'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred),
+            'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred),
-            'f1': f1_score(y_test, y_pred)
+            'f1': f1_score(y_test, y_pred),
+            'threshold': best_threshold
         }
     
     return results, X_train, X_test, y_train, y_test, scaler
@@ -889,13 +922,10 @@ def show_predictive_models(X, y, feature_cols):
     st.caption("La validation croisée évalue la stabilité des modèles en les testant sur 5 sous-ensembles différents des données.")
     
     cv_data = []
+    X_scaled_full = scaler.transform(X)
     for name, res in results.items():
         model = res['model']
-        if name == 'Logistic Regression':
-            X_scaled = scaler.transform(X)
-            scores = cross_val_score(model, X_scaled, y, cv=5, scoring='f1')
-        else:
-            scores = cross_val_score(model, X, y, cv=5, scoring='f1')
+        scores = cross_val_score(model, X_scaled_full, y, cv=5, scoring='f1')
         for fold_idx, score in enumerate(scores):
             cv_data.append({'Modèle': name, 'Fold': fold_idx + 1, 'F1-Score': score})
     
@@ -1203,17 +1233,25 @@ def show_individual_prediction(df, df_processed, X, y, feature_cols, le_dict):
     if st.button("🔮 Prédire le Risque d'Attrition", type="primary"):
         # Préparation des données
         input_data = {
-            'Age': age, 'DailyRate': 800, 'DistanceFromHome': distance,
+            'Age': age, 'DistanceFromHome': distance,
             'Education': education, 'EnvironmentSatisfaction': env_satisfaction,
-            'HourlyRate': 65, 'JobInvolvement': job_involvement, 'JobLevel': job_level,
+            'JobInvolvement': job_involvement, 'JobLevel': job_level,
             'JobSatisfaction': job_satisfaction, 'MonthlyIncome': monthly_income,
-            'MonthlyRate': 15000, 'NumCompaniesWorked': num_companies,
+            'NumCompaniesWorked': num_companies,
             'PercentSalaryHike': 15, 'PerformanceRating': performance,
             'RelationshipSatisfaction': 3, 'StockOptionLevel': stock_option,
             'TotalWorkingYears': years_at_company + 5, 'TrainingTimesLastYear': training_times,
             'WorkLifeBalance': work_life_balance, 'YearsAtCompany': years_at_company,
             'YearsInCurrentRole': years_in_role, 'YearsSinceLastPromotion': 2,
-            'YearsWithCurrManager': min(years_in_role, 5)
+            'YearsWithCurrManager': min(years_in_role, 5),
+            'OT_Binary': 1 if overtime == 'Yes' else 0,
+            'Single': 1 if marital_status == 'Single' else 0,
+            'Income_per_Year': monthly_income / (years_at_company + 5 + 1),
+            'Years_Since_Promo_Ratio': 2 / (years_at_company + 1),
+            'Satisfaction_Avg': (job_satisfaction + env_satisfaction + 3 + work_life_balance) / 4,
+            'Young_New': 1 if (age < 30 and years_at_company < 3) else 0,
+            'No_StockOption': 1 if stock_option == 0 else 0,
+            'Travel_Freq': 1 if business_travel == 'Travel_Frequently' else 0
         }
         
         # Encodage des variables catégorielles
@@ -1242,10 +1280,11 @@ def show_individual_prediction(df, df_processed, X, y, feature_cols, le_dict):
                 input_vector.append(0)
         
         input_array = np.array(input_vector).reshape(1, -1)
+        input_array_scaled = scaler.transform(input_array)
         
         # Prédiction
-        prediction = model.predict(input_array)[0]
-        probability = model.predict_proba(input_array)[0]
+        prediction = model.predict(input_array_scaled)[0]
+        probability = model.predict_proba(input_array_scaled)[0]
         risk_score = probability[1] * 100
         
         st.markdown("---")
@@ -1469,10 +1508,11 @@ def show_recommendations(df, df_processed):
     with col1:
         # Export des employés à risque
         X, y, feature_cols = create_feature_matrix(df_processed)
-        results, _, _, _, _, _ = train_models(X, y)
+        results, _, _, _, _, export_scaler = train_models(X, y)
         model = results['Random Forest']['model']
         
-        risk_scores = model.predict_proba(X)[:, 1]
+        X_scaled_export = export_scaler.transform(X)
+        risk_scores = model.predict_proba(X_scaled_export)[:, 1]
         df_export = df.copy()
         df_export['Risk_Score'] = risk_scores
         df_export['Risk_Level'] = pd.cut(risk_scores, bins=[0, 0.25, 0.5, 1], 
