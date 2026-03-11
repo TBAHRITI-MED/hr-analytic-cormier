@@ -1662,11 +1662,38 @@ def show_predictive_models(X, y, feature_cols):
         )
         st.plotly_chart(fig, width='stretch')
     
-    # Variables communes
+    # Logistic Regression — importance par coefficients
+    st.markdown("#### 📊 Importance selon la Régression Logistique (meilleur modèle)")
+    lr_model = results['Logistic Regression']['model']
+    lr_importance = pd.DataFrame({
+        'Feature': feature_cols,
+        'Importance': np.abs(lr_model.coef_[0])
+    }).sort_values('Importance', ascending=True).tail(15)
+    
+    fig = px.bar(
+        lr_importance,
+        x='Importance',
+        y='Feature',
+        orientation='h',
+        color='Importance',
+        color_continuous_scale=['#2a9d8f', '#264653'],
+        title="<b>Top 15 — Régression Logistique (|coefficients|)</b>"
+    )
+    fig.update_layout(
+        xaxis_title="Importance (valeur absolue du coefficient)",
+        yaxis_title="",
+        coloraxis_showscale=False,
+        height=500
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Pour la Régression Logistique, l'importance correspond à la valeur absolue des coefficients après standardisation. Plus le coefficient est grand, plus la variable a d'influence sur la prédiction.")
+    
+    # Variables communes aux 3 modèles
     rf_top = set(rf_importance.tail(10)['Feature'].values)
     gb_top = set(gb_importance.tail(10)['Feature'].values)
-    common = rf_top & gb_top
-    st.info(f"📌 **Variables communes aux deux modèles (Top 10) :** {', '.join(sorted(common))}")
+    lr_top = set(lr_importance.tail(10)['Feature'].values)
+    common = rf_top & gb_top & lr_top
+    st.info(f"📌 **Variables communes aux trois modèles (Top 10) :** {', '.join(sorted(common))}")
     
     st.markdown("---")
     
