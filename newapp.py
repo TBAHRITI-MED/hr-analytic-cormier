@@ -17,12 +17,15 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.metrics import (
     classification_report, confusion_matrix, roc_curve, auc,
-    precision_recall_curve, accuracy_score, precision_score, recall_score, f1_score
+    precision_recall_curve, accuracy_score, precision_score, recall_score, f1_score,
+    silhouette_score, silhouette_samples, davies_bouldin_score
 )
+from scipy.cluster.hierarchy import dendrogram, linkage
+from scipy.spatial.distance import cdist
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -264,19 +267,105 @@ def train_models(X, y):
     return results, X_train, X_test, y_train, y_test, scaler
 
 
-def perform_clustering(X, n_clusters=4):
-    """Effectue le clustering des employés"""
+def find_optimal_clusters(X, max_k=10):
+    """Trouve le nombre optimal de clusters avec plusieurs métriques"""
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
+    inertias = []
+    silhouette_scores = []
+    davies_bouldin_scores = []
+    k_range = range(2, max_k + 1)
+    
+    for k in k_range:
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(X_scaled)
+        
+        inertias.append(kmeans.inertia_)
+        silhouette_scores.append(silhouette_score(X_scaled, labels))
+        davies_bouldin_scores.append(davies_bouldin_score(X_scaled, labels))
+    
+    # Trouver k optimal basé sur silhouette (max) et davies-bouldin (min)
+    optimal_k_silhouette = k_range[np.argmax(silhouette_scores)]
+    optimal_k_davies = k_range[np.argmin(davies_bouldin_scores)]
+    
+    return {
+        'k_range': list(k_range),
+        'inertias': inertias,
+        'silhouette_scores': silhouette_scores,
+        'davies_bouldin_scores': davies_bouldin_scores,
+        'optimal_k_silhouette': optimal_k_silhouette,
+        'optimal_k_davies': optimal_k_davies,
+        'X_scaled': X_scaled
+    }
+
+
+def perform_clustering(X, n_clusters=4):
+    """Effectue le clustering des employés avec métriques avancées"""
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # K-Means clustering
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
     clusters = kmeans.fit_predict(X_scaled)
     
-    # PCA pour visualisation
-    pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(X_scaled)
+    # Métriques de qualité
+    silhouette_avg = silhouette_score(X_scaled, clusters)
+    silhouette_vals = silhouette_samples(X_scaled, clusters)
+    davies_bouldin = davies_bouldin_score(X_scaled, clusters)
     
-    return clusters, X_pca, kmeans, pca, scaler
+    # PCA pour visualisation (2D et 3D)
+    pca_2d = PCA(n_components=2)
+    X_pca_2d = pca_2d.fit_transform(X_scaled)
+    
+    pca_3d = PCA(n_components=3)
+    X_pca_3d = pca_3d.fit_transform(X_scaled)
+    
+    # PCA complète pour variance expliquée
+    pca_full = PCA()
+    pca_full.fit(X_scaled)
+    
+    return {
+        'clusters': clusters,
+        'X_pca_2d': X_pca_2d,
+        'X_pca_3d': X_pca_3d,
+        'kmeans': kmeans,
+        'pca_2d': pca_2d,
+        'pca_3d': pca_3d,
+        'scaler': scaler,
+        'silhouette_avg': silhouette_avg,
+        'silhouette_vals': silhouette_vals,
+        'davies_bouldin': davies_bouldin,
+        'variance_explained_2d': pca_2d.explained_variance_ratio_,
+        'variance_explained_3d': pca_3d.explained_variance_ratio_,
+        'cumulative_variance': np.cumsum(pca_full.explained_variance_ratio_),
+        'X_scaled': X_scaled
+    }
+
+
+def perform_hierarchical_clustering(X, n_clusters=4):
+    """Effectue le clustering hiérarchique"""
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Clustering hiérarchique
+    hierarchical = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
+    clusters = hierarchical.fit_predict(X_scaled)
+    
+    # Linkage pour dendrogramme
+    linkage_matrix = linkage(X_scaled, method='ward')
+    
+    # Métriques
+    silhouette_avg = silhouette_score(X_scaled, clusters)
+    davies_bouldin = davies_bouldin_score(X_scaled, clusters)
+    
+    return {
+        'clusters': clusters,
+        'linkage_matrix': linkage_matrix,
+        'silhouette_avg': silhouette_avg,
+        'davies_bouldin': davies_bouldin,
+        'model': hierarchical
+    }
 
 
 def main():
@@ -374,7 +463,7 @@ def show_overview(df, df_processed):
             text=f"<b>{attrition_rate:.1f}%</b><br>Taux d'attrition",
             x=0.5, y=0.5, font_size=16, showarrow=False
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Attrition par département
@@ -397,7 +486,7 @@ def show_overview(df, df_processed):
             coloraxis_showscale=False,
             height=400
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Statistiques détaillées
     st.markdown("### 📊 Statistiques Clés")
@@ -473,7 +562,7 @@ def show_exploratory_analysis(df, df_processed):
                 barmode='stack', yaxis_title="Pourcentage (%)",
                 height=400
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             overtime_yes_attr = df[df['OverTime'] == 'Yes']['Attrition'].value_counts(normalize=True).get('Yes', 0) * 100
             overtime_no_attr = df[df['OverTime'] == 'No']['Attrition'].value_counts(normalize=True).get('Yes', 0) * 100
@@ -500,7 +589,7 @@ def show_exploratory_analysis(df, df_processed):
                 coloraxis_showscale=False,
                 height=400
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             low_sat_attr = satisfaction_attr[satisfaction_attr['JobSatisfaction'] == 1]['Attrition_Rate'].values[0]
             high_sat_attr = satisfaction_attr[satisfaction_attr['JobSatisfaction'] == 4]['Attrition_Rate'].values[0]
@@ -530,7 +619,7 @@ def show_exploratory_analysis(df, df_processed):
             yaxis_title="Taux d'Attrition (%)",
             coloraxis_showscale=False
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     elif analysis_type == "Analyse par Variables Continues":
         st.markdown("### 📊 Distribution des Variables Continues")
@@ -550,7 +639,7 @@ def show_exploratory_analysis(df, df_processed):
                 title=f"<b>Distribution de {selected_var}</b>"
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         
         with col2:
             fig = px.box(
@@ -559,7 +648,7 @@ def show_exploratory_analysis(df, df_processed):
                 title=f"<b>Boxplot de {selected_var} par Attrition</b>"
             )
             fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         
         # Statistiques
         col1, col2 = st.columns(2)
@@ -597,7 +686,7 @@ def show_exploratory_analysis(df, df_processed):
             coloraxis_showscale=False,
             height=500
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Tableau détaillé
         detailed = df.groupby(selected_cat).agg({
@@ -629,7 +718,7 @@ def show_exploratory_analysis(df, df_processed):
             title="<b>Matrice de Corrélations</b>"
         )
         fig.update_layout(height=700)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Top corrélations avec l'attrition
         st.markdown("### 🎯 Top Corrélations avec l'Attrition")
@@ -649,123 +738,691 @@ def show_exploratory_analysis(df, df_processed):
             coloraxis_showscale=False,
             height=500
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def show_segmentation(df_processed, X, y):
-    """Affiche la segmentation des employés"""
-    st.markdown('<div class="section-header"><h2>🎯 Segmentation des Employés</h2></div>', unsafe_allow_html=True)
+    """Affiche la segmentation des employés avec analyses avancées"""
+    st.markdown('<div class="section-header"><h2>🎯 Segmentation Avancée des Employés</h2></div>', unsafe_allow_html=True)
     
     st.markdown("""
-    La segmentation permet d'identifier des groupes homogènes d'employés avec des caractéristiques 
-    et des niveaux de risque similaires.
-    """)
+    <div class="insight-box">
+        <p>La segmentation permet d'identifier des groupes homogènes d'employés avec des caractéristiques 
+        et des niveaux de risque similaires. Cette analyse utilise des métriques avancées pour optimiser 
+        le nombre de segments et évaluer la qualité de la segmentation.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Sélection du nombre de clusters
-    n_clusters = st.slider("Nombre de segments:", 2, 6, 4)
+    # Onglets pour différentes analyses
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🎯 Optimisation & Clustering", 
+        "📊 Visualisations Avancées", 
+        "🔍 Analyse Détaillée", 
+        "🌳 Clustering Hiérarchique"
+    ])
     
-    # Clustering
-    clusters, X_pca, kmeans, pca, scaler = perform_clustering(X, n_clusters)
+    # ===================== TAB 1: OPTIMISATION & CLUSTERING =====================
+    with tab1:
+        st.markdown("### 🔬 Détermination du Nombre Optimal de Clusters")
+        
+        with st.spinner("Calcul des métriques d'optimisation..."):
+            opt_results = find_optimal_clusters(X, max_k=10)
+        
+        # Graphiques d'optimisation
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Méthode du coude (Elbow)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=opt_results['k_range'],
+                y=opt_results['inertias'],
+                mode='lines+markers',
+                marker=dict(size=10, color='#1d3557'),
+                line=dict(width=3, color='#1d3557')
+            ))
+            fig.update_layout(
+                title="<b>Méthode du Coude (Elbow)</b>",
+                xaxis_title="Nombre de Clusters (k)",
+                yaxis_title="Inertie",
+                height=400
+            )
+            st.plotly_chart(fig, width='stretch')
+            st.caption("L'inertie mesure la compacité des clusters. Chercher le 'coude' dans la courbe.")
+        
+        with col2:
+            # Silhouette Score
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=opt_results['k_range'],
+                y=opt_results['silhouette_scores'],
+                mode='lines+markers',
+                marker=dict(size=10, color='#2a9d8f'),
+                line=dict(width=3, color='#2a9d8f'),
+                fill='tozeroy',
+                fillcolor='rgba(42,157,143,0.2)'
+            ))
+            fig.add_hline(
+                y=max(opt_results['silhouette_scores']),
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"Max: {max(opt_results['silhouette_scores']):.3f}"
+            )
+            fig.update_layout(
+                title="<b>Silhouette Score</b>",
+                xaxis_title="Nombre de Clusters (k)",
+                yaxis_title="Score",
+                height=400
+            )
+            st.plotly_chart(fig, width='stretch')
+            st.caption("Score de 0 à 1. Plus c'est élevé, meilleure est la séparation entre clusters.")
+        
+        # Recommandations
+        st.markdown("### 💡 Recommandations")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"**Silhouette optimal:** k = {opt_results['optimal_k_silhouette']}")
+        with col2:
+            recommended_k = opt_results['optimal_k_silhouette']
+            st.success(f"**Recommandé:** k = {recommended_k}")
+        
+        st.markdown("---")
+        
+        # Sélection manuelle du nombre de clusters
+        st.markdown("### ⚙️ Configuration du Clustering")
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            n_clusters = st.slider(
+                "Nombre de segments (k):", 
+                2, 10, 
+                opt_results['optimal_k_silhouette'],
+                help="Ajustez selon les recommandations ci-dessus"
+            )
+        
+        with col2:
+            st.metric("K Sélectionné", n_clusters)
+        
+        # Clustering avec le k choisi
+        with st.spinner("Clustering en cours..."):
+            cluster_results = perform_clustering(X, n_clusters)
+        
+        # Métriques de qualité globales
+        st.markdown("### 📈 Métriques de Qualité du Clustering")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Silhouette Score",
+                f"{cluster_results['silhouette_avg']:.3f}",
+                help="Entre -1 et 1. >0.5 = bon, >0.7 = excellent"
+            )
+        with col2:
+            variance_2d = cluster_results['variance_explained_2d'].sum() * 100
+            st.metric(
+                "Variance PCA 2D",
+                f"{variance_2d:.1f}%",
+                help="Variance expliquée par les 2 premières composantes"
+            )
+        with col3:
+            variance_3d = cluster_results['variance_explained_3d'].sum() * 100
+            st.metric(
+                "Variance PCA 3D",
+                f"{variance_3d:.1f}%",
+                help="Variance expliquée par les 3 premières composantes"
+            )
+        
+        # Graphique de variance cumulée
+        st.markdown("### 📊 Variance Expliquée Cumulée (PCA)")
+        n_components = min(20, len(cluster_results['cumulative_variance']))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=list(range(1, n_components + 1)),
+            y=cluster_results['cumulative_variance'][:n_components] * 100,
+            mode='lines+markers',
+            marker=dict(size=8, color='#457b9d'),
+            line=dict(width=3, color='#457b9d'),
+            fill='tozeroy',
+            fillcolor='rgba(69,123,157,0.2)'
+        ))
+        fig.add_hline(y=90, line_dash="dash", line_color="green", annotation_text="90%")
+        fig.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95%")
+        fig.update_layout(
+            title="<b>Variance Cumulée par Nombre de Composantes</b>",
+            xaxis_title="Nombre de Composantes Principales",
+            yaxis_title="Variance Expliquée Cumulée (%)",
+            height=400
+        )
+        st.plotly_chart(fig, width='stretch')
+        
+        # Silhouette par cluster
+        st.markdown("### 🎯 Score de Silhouette par Cluster")
+        
+        silhouette_by_cluster = []
+        for i in range(n_clusters):
+            cluster_silhouette = cluster_results['silhouette_vals'][cluster_results['clusters'] == i].mean()
+            silhouette_by_cluster.append({
+                'Cluster': f'Cluster {i}',
+                'Silhouette': cluster_silhouette,
+                'Taille': (cluster_results['clusters'] == i).sum()
+            })
+        
+        silhouette_df = pd.DataFrame(silhouette_by_cluster)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.bar(
+                silhouette_df,
+                x='Cluster',
+                y='Silhouette',
+                color='Silhouette',
+                color_continuous_scale='RdYlGn',
+                title="<b>Silhouette Score par Cluster</b>"
+            )
+            fig.add_hline(
+                y=cluster_results['silhouette_avg'],
+                line_dash="dash",
+                line_color="black",
+                annotation_text="Moyenne"
+            )
+            fig.update_layout(height=400, coloraxis_showscale=False)
+            st.plotly_chart(fig, width='stretch')
+        
+        with col2:
+            fig = px.bar(
+                silhouette_df,
+                x='Cluster',
+                y='Taille',
+                color='Taille',
+                color_continuous_scale='Blues',
+                title="<b>Taille des Clusters</b>"
+            )
+            fig.update_layout(height=400, coloraxis_showscale=False)
+            st.plotly_chart(fig, width='stretch')
+        
+        st.dataframe(silhouette_df.style.background_gradient(cmap='RdYlGn', subset=['Silhouette']))
     
-    df_cluster = df_processed.copy()
-    df_cluster['Cluster'] = clusters
-    df_cluster['PCA1'] = X_pca[:, 0]
-    df_cluster['PCA2'] = X_pca[:, 1]
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Visualisation PCA
-        fig = px.scatter(
-            df_cluster, x='PCA1', y='PCA2',
-            color='Cluster',
-            symbol='Attrition',
-            color_continuous_scale='viridis',
-            title="<b>Segmentation des Employés (PCA)</b>",
-            hover_data=['Age', 'MonthlyIncome', 'JobSatisfaction']
+    # ===================== TAB 2: VISUALISATIONS AVANCÉES =====================
+    with tab2:
+        # Préparer les données
+        df_cluster = df_processed.copy()
+        df_cluster['Cluster'] = cluster_results['clusters']
+        df_cluster['PCA1'] = cluster_results['X_pca_2d'][:, 0]
+        df_cluster['PCA2'] = cluster_results['X_pca_2d'][:, 1]
+        df_cluster['PCA3'] = cluster_results['X_pca_3d'][:, 2]
+        
+        st.markdown("### 🎨 Visualisations Multidimensionnelles")
+        
+        # PCA 2D et 3D
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Projection PCA 2D**")
+            fig = px.scatter(
+                df_cluster,
+                x='PCA1',
+                y='PCA2',
+                color='Cluster',
+                symbol='Attrition',
+                color_continuous_scale='viridis',
+                hover_data=['Age', 'MonthlyIncome', 'JobSatisfaction', 'YearsAtCompany'],
+                title=f"<b>PCA 2D - {variance_2d:.1f}% variance</b>"
+            )
+            fig.update_layout(height=500)
+            st.plotly_chart(fig, width='stretch')
+        
+        with col2:
+            st.markdown("**Projection PCA 3D Interactive**")
+            fig = px.scatter_3d(
+                df_cluster,
+                x='PCA1',
+                y='PCA2',
+                z='PCA3',
+                color='Cluster',
+                symbol='Attrition',
+                color_continuous_scale='viridis',
+                hover_data=['Age', 'MonthlyIncome', 'JobSatisfaction'],
+                title=f"<b>PCA 3D - {variance_3d:.1f}% variance</b>"
+            )
+            fig.update_layout(height=500)
+            st.plotly_chart(fig, width='stretch')
+        
+        st.caption("💡 Dans la vue 3D, vous pouvez pivoter la visualisation avec la souris pour explorer les clusters sous différents angles.")
+        
+        # Heatmap des caractéristiques moyennes
+        st.markdown("### 🔥 Heatmap des Caractéristiques Moyennes par Cluster")
+        
+        # Sélection des variables clés
+        key_features = ['Age', 'MonthlyIncome', 'JobSatisfaction', 'EnvironmentSatisfaction',
+                       'WorkLifeBalance', 'YearsAtCompany', 'YearsInCurrentRole', 
+                       'DistanceFromHome', 'NumCompaniesWorked', 'TrainingTimesLastYear',
+                       'PercentSalaryHike', 'StockOptionLevel']
+        
+        available_features = [f for f in key_features if f in df_cluster.columns]
+        
+        # Calculer les moyennes par cluster (normalisées)
+        heatmap_data = df_cluster.groupby('Cluster')[available_features].mean()
+        # Normaliser entre 0 et 1 pour chaque variable
+        heatmap_normalized = (heatmap_data - heatmap_data.min()) / (heatmap_data.max() - heatmap_data.min())
+        
+        fig = px.imshow(
+            heatmap_normalized.T,
+            labels=dict(x="Cluster", y="Variable", color="Valeur Normalisée"),
+            x=[f'Cluster {i}' for i in range(n_clusters)],
+            y=available_features,
+            color_continuous_scale='RdYlGn',
+            aspect='auto',
+            title="<b>Profil Normalisé des Clusters</b>"
         )
         fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
+        
+        st.caption("🎯 Les couleurs vertes indiquent des valeurs élevées, les rouges des valeurs basses (par rapport aux autres clusters).")
+        
+        # Radar chart comparatif
+        st.markdown("### 📡 Radar Chart Comparatif des Clusters")
+        
+        # Utiliser un sous-ensemble de variables pour le radar
+        radar_vars = ['Age', 'MonthlyIncome', 'JobSatisfaction', 'WorkLifeBalance', 
+                     'YearsAtCompany', 'EnvironmentSatisfaction']
+        radar_vars = [v for v in radar_vars if v in df_cluster.columns]
+        
+        # Normaliser les données pour le radar chart
+        radar_data = df_cluster.groupby('Cluster')[radar_vars].mean()
+        radar_normalized = (radar_data - radar_data.min()) / (radar_data.max() - radar_data.min())
+        
+        fig = go.Figure()
+        colors = px.colors.qualitative.Set2[:n_clusters]
+        
+        for i, cluster in enumerate(range(n_clusters)):
+            values = radar_normalized.loc[cluster].tolist()
+            values.append(values[0])  # Fermer le polygone
+            
+            fig.add_trace(go.Scatterpolar(
+                r=values,
+                theta=radar_vars + [radar_vars[0]],
+                fill='toself',
+                name=f'Cluster {cluster}',
+                line_color=colors[i],
+                opacity=0.6
+            ))
+        
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+            title="<b>Comparaison des Profils de Clusters</b>",
+            height=600
+        )
+        st.plotly_chart(fig, width='stretch')
+        
+        # Distributions comparatives
+        st.markdown("### 📦 Distributions Comparatives par Variable")
+        
+        var_to_plot = st.selectbox(
+            "Sélectionnez une variable à comparer:",
+            ['Age', 'MonthlyIncome', 'JobSatisfaction', 'WorkLifeBalance', 
+             'YearsAtCompany', 'DistanceFromHome', 'NumCompaniesWorked']
+        )
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Convertir Cluster en string pour traitement catégoriel
+            df_plot = df_cluster.copy()
+            df_plot['Cluster_str'] = df_plot['Cluster'].astype(str)
+            
+            fig = px.box(
+                df_plot,
+                x='Cluster_str',
+                y=var_to_plot,
+                color='Cluster_str',
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                title=f"<b>Distribution de {var_to_plot} par Cluster</b>"
+            )
+            fig.update_layout(height=400, showlegend=False)
+            fig.update_xaxes(title="Cluster")
+            st.plotly_chart(fig, width='stretch')
+        
+        with col2:
+            fig = px.violin(
+                df_plot,
+                x='Cluster_str',
+                y=var_to_plot,
+                color='Cluster_str',
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                title=f"<b>Violin Plot - {var_to_plot}</b>",
+                box=True
+            )
+            fig.update_layout(height=400, showlegend=False)
+            fig.update_xaxes(title="Cluster")
+            st.plotly_chart(fig, width='stretch')
     
-    with col2:
-        # Taux d'attrition par cluster
+    # ===================== TAB 3: ANALYSE DÉTAILLÉE =====================
+    with tab3:
+        st.markdown("### 📋 Profil Détaillé des Clusters")
+        
+        # Statistiques par cluster
         cluster_attr = df_cluster.groupby('Cluster').agg({
             'Attrition_Binary': ['mean', 'sum', 'count'],
             'MonthlyIncome': 'mean',
             'JobSatisfaction': 'mean',
-            'YearsAtCompany': 'mean'
+            'YearsAtCompany': 'mean',
+            'Age': 'mean',
+            'WorkLifeBalance': 'mean',
+            'DistanceFromHome': 'mean'
         }).round(2)
+        
         cluster_attr.columns = ['Taux_Attrition', 'Nb_Departs', 'Total', 
-                               'Salaire_Moyen', 'Satisfaction', 'Anciennete']
+                               'Salaire_Moyen', 'Satisfaction', 'Anciennete',
+                               'Age_Moyen', 'WorkLife', 'Distance']
         cluster_attr['Taux_Attrition'] = (cluster_attr['Taux_Attrition'] * 100).round(1)
         
+        # Taux d'attrition par cluster
         fig = px.bar(
             cluster_attr.reset_index(),
             x='Cluster',
             y='Taux_Attrition',
             color='Taux_Attrition',
             color_continuous_scale=['#2a9d8f', '#f4a261', '#e63946'],
-            title="<b>Taux d'Attrition par Segment</b>"
+            title="<b>Taux d'Attrition par Cluster</b>",
+            text='Taux_Attrition'
         )
+        fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         fig.update_layout(
-            xaxis_title="Segment",
+            xaxis_title="Cluster",
             yaxis_title="Taux d'Attrition (%)",
             coloraxis_showscale=False,
-            height=500
+            height=400
         )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Profil détaillé de chaque cluster
-    st.markdown("### 📋 Profil Détaillé des Segments")
-    
-    for i in range(n_clusters):
-        cluster_data = df_cluster[df_cluster['Cluster'] == i]
-        attr_rate = cluster_data['Attrition_Binary'].mean() * 100
+        st.plotly_chart(fig, width='stretch')
         
-        if attr_rate > 25:
-            risk_class = "risk-high"
-            risk_level = "🔴 ÉLEVÉ"
-        elif attr_rate > 15:
-            risk_class = "risk-medium"
-            risk_level = "🟡 MODÉRÉ"
-        else:
-            risk_class = "risk-low"
-            risk_level = "🟢 FAIBLE"
+        # Tableau récapitulatif
+        st.markdown("### 📊 Tableau Récapitulatif")
+        st.dataframe(
+            cluster_attr.style.background_gradient(cmap='RdYlGn_r', subset=['Taux_Attrition'])
+                              .background_gradient(cmap='Greens', subset=['Satisfaction', 'WorkLife'])
+                              .format({
+                                  'Taux_Attrition': '{:.1f}%',
+                                  'Salaire_Moyen': '${:,.0f}',
+                                  'Satisfaction': '{:.2f}',
+                                  'Anciennete': '{:.1f}',
+                                  'Age_Moyen': '{:.1f}',
+                                  'WorkLife': '{:.2f}',
+                                  'Distance': '{:.1f}'
+                              }),
+            width='stretch'
+        )
         
-        with st.expander(f"📊 Segment {i} - Risque {risk_level} ({len(cluster_data)} employés)", expanded=(attr_rate > 20)):
-            col1, col2, col3, col4 = st.columns(4)
+        # Profils détaillés par cluster
+        st.markdown("### 🔍 Analyse Détaillée par Cluster")
+        
+        for i in range(n_clusters):
+            cluster_data = df_cluster[df_cluster['Cluster'] == i]
+            attr_rate = cluster_data['Attrition_Binary'].mean() * 100
             
-            with col1:
-                st.metric("Taux d'Attrition", f"{attr_rate:.1f}%")
-            with col2:
-                st.metric("Salaire Moyen", f"${cluster_data['MonthlyIncome'].mean():,.0f}")
-            with col3:
-                st.metric("Satisfaction", f"{cluster_data['JobSatisfaction'].mean():.2f}/4")
-            with col4:
-                st.metric("Ancienneté", f"{cluster_data['YearsAtCompany'].mean():.1f} ans")
-            
-            # Caractéristiques dominantes
-            st.markdown("**Caractéristiques principales:**")
-            characteristics = []
-            
-            if cluster_data['OverTime'].value_counts(normalize=True).get('Yes', 0) > 0.4:
-                characteristics.append("• Fort taux d'heures supplémentaires")
-            if cluster_data['MonthlyIncome'].mean() < df_processed['MonthlyIncome'].quantile(0.25):
-                characteristics.append("• Salaires inférieurs à la moyenne")
-            if cluster_data['JobSatisfaction'].mean() < 2.5:
-                characteristics.append("• Faible satisfaction au travail")
-            if cluster_data['YearsAtCompany'].mean() < 3:
-                characteristics.append("• Employés récents (< 3 ans)")
-            if cluster_data['DistanceFromHome'].mean() > 15:
-                characteristics.append("• Distance domicile-travail élevée")
-            if cluster_data['WorkLifeBalance'].mean() < 2.5:
-                characteristics.append("• Mauvais équilibre vie/travail")
-            
-            if characteristics:
-                for char in characteristics:
-                    st.markdown(char)
+            if attr_rate > 25:
+                risk_level = "🔴 ÉLEVÉ"
+                border_color = "#e63946"
+            elif attr_rate > 15:
+                risk_level = "🟡 MODÉRÉ"
+                border_color = "#f4a261"
             else:
-                st.markdown("• Profil équilibré sans facteur de risque majeur")
+                risk_level = "🟢 FAIBLE"
+                border_color = "#2a9d8f"
+            
+            with st.expander(f"📊 **Cluster {i}** - Risque {risk_level} ({len(cluster_data)} employés, {attr_rate:.1f}% attrition)", expanded=(attr_rate > 20)):
+                # Métriques clés
+                col1, col2, col3, col4, col5 = st.columns(5)
+                
+                with col1:
+                    st.metric("Âge Moyen", f"{cluster_data['Age'].mean():.1f} ans")
+                with col2:
+                    st.metric("Salaire Moyen", f"${cluster_data['MonthlyIncome'].mean():,.0f}")
+                with col3:
+                    st.metric("Satisfaction", f"{cluster_data['JobSatisfaction'].mean():.2f}/4")
+                with col4:
+                    st.metric("Ancienneté", f"{cluster_data['YearsAtCompany'].mean():.1f} ans")
+                with col5:
+                    st.metric("Work-Life", f"{cluster_data['WorkLifeBalance'].mean():.2f}/4")
+                
+                # Analyse des variables catégorielles
+                st.markdown("**📊 Répartition des Variables Catégorielles**")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    # OverTime
+                    overtime_pct = cluster_data['OverTime'].value_counts(normalize=True) * 100
+                    st.markdown(f"**Heures Supplémentaires:**")
+                    for val, pct in overtime_pct.items():
+                        st.markdown(f"- {val}: {pct:.1f}%")
+                
+                with col2:
+                    # Department
+                    if 'Department' in cluster_data.columns:
+                        dept_pct = cluster_data['Department'].value_counts(normalize=True) * 100
+                        st.markdown(f"**Départements:**")
+                        for val, pct in dept_pct.head(3).items():
+                            st.markdown(f"- {val}: {pct:.1f}%")
+                
+                with col3:
+                    # MaritalStatus
+                    if 'MaritalStatus' in cluster_data.columns:
+                        marital_pct = cluster_data['MaritalStatus'].value_counts(normalize=True) * 100
+                        st.markdown(f"**Statut Marital:**")
+                        for val, pct in marital_pct.items():
+                            st.markdown(f"- {val}: {pct:.1f}%")
+                
+                # Caractéristiques dominantes
+                st.markdown("**✨ Caractéristiques Principales:**")
+                characteristics = []
+                
+                if cluster_data['OverTime'].value_counts(normalize=True).get('Yes', 0) > 0.4:
+                    characteristics.append("• 🔴 **Fort taux d'heures supplémentaires** (>40%)")
+                if cluster_data['MonthlyIncome'].mean() < df_processed['MonthlyIncome'].quantile(0.25):
+                    characteristics.append("• 💰 **Salaires dans le quartile inférieur**")
+                if cluster_data['MonthlyIncome'].mean() > df_processed['MonthlyIncome'].quantile(0.75):
+                    characteristics.append("• 💎 **Salaires dans le quartile supérieur**")
+                if cluster_data['JobSatisfaction'].mean() < 2.5:
+                    characteristics.append("• 😞 **Faible satisfaction au travail** (<2.5/4)")
+                if cluster_data['JobSatisfaction'].mean() > 3.2:
+                    characteristics.append("• 😊 **Haute satisfaction au travail** (>3.2/4)")
+                if cluster_data['YearsAtCompany'].mean() < 3:
+                    characteristics.append("• 🆕 **Employés récents** (< 3 ans d'ancienneté)")
+                if cluster_data['YearsAtCompany'].mean() > 10:
+                    characteristics.append("• 🏆 **Employés expérimentés** (> 10 ans)")
+                if cluster_data['Age'].mean() < 30:
+                    characteristics.append("• 👶 **Population jeune** (< 30 ans)")
+                if cluster_data['Age'].mean() > 45:
+                    characteristics.append("• 👴 **Population senior** (> 45 ans)")
+                if cluster_data['DistanceFromHome'].mean() > 15:
+                    characteristics.append("• 🚗 **Distance domicile-travail élevée** (>15 km)")
+                if cluster_data['WorkLifeBalance'].mean() < 2.5:
+                    characteristics.append("• ⚖️ **Mauvais équilibre vie/travail** (<2.5/4)")
+                if cluster_data['StockOptionLevel'].mean() < 0.5:
+                    characteristics.append("• 📉 **Peu ou pas de stock options**")
+                if cluster_data['NumCompaniesWorked'].mean() > 4:
+                    characteristics.append("• 🔄 **Forte mobilité professionnelle** (>4 entreprises)")
+                
+                if characteristics:
+                    for char in characteristics:
+                        st.markdown(char)
+                else:
+                    st.markdown("• ✅ **Profil équilibré** sans facteur de risque majeur")
+                
+                # Distribution des JobRoles
+                if 'JobRole' in cluster_data.columns:
+                    st.markdown("**👔 Top 5 Postes dans ce Cluster:**")
+                    top_roles = cluster_data['JobRole'].value_counts().head(5)
+                    roles_df = pd.DataFrame({
+                        'Poste': top_roles.index,
+                        'Nombre': top_roles.values,
+                        'Pourcentage': (top_roles.values / len(cluster_data) * 100).round(1)
+                    })
+                    st.dataframe(roles_df, width='stretch', hide_index=True)
+    
+    # ===================== TAB 4: CLUSTERING HIÉRARCHIQUE =====================
+    with tab4:
+        st.markdown("### 🌳 Clustering Hiérarchique (Hierarchical Clustering)")
+        
+        st.markdown("""
+        <div class="insight-box">
+            <p>Le clustering hiérarchique crée une hiérarchie de clusters qui peut être visualisée 
+            avec un dendrogramme. Cette méthode ne nécessite pas de spécifier le nombre de clusters à l'avance.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Configuration
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            n_clusters_hier = st.slider(
+                "Nombre de clusters pour le découpage:",
+                2, 10, n_clusters,
+                key="hierarchical_k"
+            )
+        
+        with col2:
+            st.metric("Clusters Hiérarchiques", n_clusters_hier)
+        
+        with st.spinner("Calcul du clustering hiérarchique..."):
+            hier_results = perform_hierarchical_clustering(X, n_clusters_hier)
+        
+        # Métriques
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Silhouette Score", f"{hier_results['silhouette_avg']:.3f}")
+        with col2:
+            delta_silhouette = hier_results['silhouette_avg'] - cluster_results['silhouette_avg']
+            st.metric(
+                "Silhouette vs K-Means",
+                f"{delta_silhouette:+.3f}",
+                delta=f"{delta_silhouette:+.3f}",
+                delta_color="normal"
+            )
+        
+        # Dendrogramme
+        st.markdown("### 🌲 Dendrogramme")
+        
+        # Limiter le nombre de données pour le dendrogramme (trop lent sinon)
+        max_samples_dendro = 100
+        if len(X) > max_samples_dendro:
+            st.warning(f"⚠️ Dendrogramme limité à {max_samples_dendro} échantillons aléatoires pour des raisons de performance.")
+            sample_idx = np.random.choice(len(X), max_samples_dendro, replace=False)
+            scaler = StandardScaler()
+            X_sample = scaler.fit_transform(X.iloc[sample_idx])
+            linkage_matrix_display = linkage(X_sample, method='ward')
+        else:
+            linkage_matrix_display = hier_results['linkage_matrix']
+        
+        fig = go.Figure()
+        
+        # Créer le dendrogramme avec scipy
+        dendro = dendrogram(linkage_matrix_display, no_plot=True)
+        
+        # Ajouter les lignes du dendrogramme
+        for i, (xi, yi) in enumerate(zip(dendro['icoord'], dendro['dcoord'])):
+            fig.add_trace(go.Scatter(
+                x=xi,
+                y=yi,
+                mode='lines',
+                line=dict(color='#1d3557', width=1.5),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+        
+        fig.update_layout(
+            title="<b>Dendrogramme du Clustering Hiérarchique</b>",
+            xaxis_title="Échantillons",
+            yaxis_title="Distance",
+            height=600,
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig, width='stretch')
+        
+        st.caption("📊 Le dendrogramme montre comment les employés sont regroupés hiérarchiquement. Plus la fusion se fait en hauteur, plus les clusters sont différents.")
+        
+        # Comparaison avec K-Means
+        st.markdown("### ⚖️ Comparaison K-Means vs Hiérarchique")
+        
+        df_comparison = df_processed.copy()
+        df_comparison['Cluster_KMeans'] = cluster_results['clusters']
+        df_comparison['Cluster_Hierarchical'] = hier_results['clusters']
+        
+        # Matrice de confusion entre les deux méthodes
+        confusion_clusters = pd.crosstab(
+            df_comparison['Cluster_KMeans'],
+            df_comparison['Cluster_Hierarchical'],
+            normalize='index'
+        ) * 100
+        
+        fig = px.imshow(
+            confusion_clusters,
+            labels=dict(x="Cluster Hiérarchique", y="Cluster K-Means", color="% Overlap"),
+            color_continuous_scale='Blues',
+            title="<b>Matrice de Correspondance entre Méthodes</b>",
+            text_auto='.1f'
+        )
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, width='stretch')
+        
+        st.caption("💡 Cette matrice montre comment les clusters de K-Means correspondent aux clusters hiérarchiques. Des valeurs élevées sur la diagonale indiquent un bon accord entre les deux méthodes.")
+        
+        # Statistiques comparatives
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**📊 Taux d'Attrition - K-Means**")
+            kmeans_attr = df_comparison.groupby('Cluster_KMeans')['Attrition_Binary'].mean() * 100
+            st.dataframe(
+                kmeans_attr.sort_values(ascending=False).to_frame('Attrition (%)').style.format('{:.1f}%'),
+                width='stretch'
+            )
+        
+        with col2:
+            st.markdown("**📊 Taux d'Attrition - Hiérarchique**")
+            hier_attr = df_comparison.groupby('Cluster_Hierarchical')['Attrition_Binary'].mean() * 100
+            st.dataframe(
+                hier_attr.sort_values(ascending=False).to_frame('Attrition (%)').style.format('{:.1f}%'),
+                width='stretch'
+            )
+        
+        # Export
+        st.markdown("---")
+        st.markdown("### 💾 Export des Résultats")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            export_df_kmeans = df_processed.copy()
+            export_df_kmeans['Cluster_KMeans'] = cluster_results['clusters']
+            export_df_kmeans['Silhouette_Score'] = cluster_results['silhouette_vals']
+            
+            csv_kmeans = export_df_kmeans[['EmployeeNumber', 'Cluster_KMeans', 'Silhouette_Score', 
+                                           'Attrition', 'Age', 'MonthlyIncome', 'JobSatisfaction']].to_csv(index=False)
+            
+            st.download_button(
+                label="📥 Télécharger Segments K-Means",
+                data=csv_kmeans,
+                file_name=f"clusters_kmeans_{n_clusters}.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            export_df_hier = df_processed.copy()
+            export_df_hier['Cluster_Hierarchical'] = hier_results['clusters']
+            
+            csv_hier = export_df_hier[['EmployeeNumber', 'Cluster_Hierarchical', 
+                                       'Attrition', 'Age', 'MonthlyIncome', 'JobSatisfaction']].to_csv(index=False)
+            
+            st.download_button(
+                label="📥 Télécharger Segments Hiérarchiques",
+                data=csv_hier,
+                file_name=f"clusters_hierarchical_{n_clusters_hier}.csv",
+                mime="text/csv"
+            )
 
 
 def show_predictive_models(X, y, feature_cols):
@@ -851,7 +1508,7 @@ def show_predictive_models(X, y, feature_cols):
             legend_title="Métrique",
             height=450
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Radar chart
@@ -874,7 +1531,7 @@ def show_predictive_models(X, y, feature_cols):
             title="<b>Profil Radar des Modèles</b>",
             height=450
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     st.caption("Le graphique radar permet de visualiser d'un coup d'œil les forces et faiblesses de chaque modèle sur les 4 métriques.")
     
@@ -912,7 +1569,7 @@ def show_predictive_models(X, y, feature_cols):
         showlegend=False,
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     cv_summary = cv_df.groupby('Modèle')['F1-Score'].agg(['mean', 'std']).round(3)
     cv_summary.columns = ['F1 Moyen', 'Écart-type']
@@ -950,7 +1607,7 @@ def show_predictive_models(X, y, feature_cols):
             coloraxis_showscale=False,
             height=500
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         # Gradient Boosting
@@ -975,7 +1632,7 @@ def show_predictive_models(X, y, feature_cols):
             coloraxis_showscale=False,
             height=500
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     # Variables communes
     rf_top = set(rf_importance.tail(10)['Feature'].values)
@@ -1018,7 +1675,7 @@ def show_predictive_models(X, y, feature_cols):
             yaxis_title="Taux de Vrais Positifs (TPR)",
             height=450
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     with col2:
         fig = go.Figure()
@@ -1039,7 +1696,7 @@ def show_predictive_models(X, y, feature_cols):
             yaxis_title="Précision",
             height=450
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     
     st.caption("**ROC** : performance globale du classifieur. **Précision-Rappel** : plus adaptée aux données déséquilibrées (peu de départs vs beaucoup de maintiens).")
     
@@ -1069,7 +1726,7 @@ def show_predictive_models(X, y, feature_cols):
                 height=350,
                 coloraxis_showscale=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             tn, fp, fn, tp = cm.ravel()
             st.caption(f"VP={tp} | FP={fp} | FN={fn} | VN={tn}")
@@ -1103,7 +1760,7 @@ def show_predictive_models(X, y, feature_cols):
         yaxis_title="Nombre d'employés",
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     col1, col2 = st.columns(2)
     with col1:
