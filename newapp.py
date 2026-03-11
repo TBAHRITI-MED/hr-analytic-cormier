@@ -1051,41 +1051,6 @@ def show_segmentation(df_processed, X, y):
         
         st.caption("🎯 Les couleurs vertes indiquent des valeurs élevées, les rouges des valeurs basses (par rapport aux autres clusters).")
         
-        # Radar chart comparatif
-        st.markdown("### 📡 Radar Chart Comparatif des Clusters")
-        
-        # Utiliser un sous-ensemble de variables pour le radar
-        radar_vars = ['Age', 'MonthlyIncome', 'JobSatisfaction', 'WorkLifeBalance', 
-                     'YearsAtCompany', 'EnvironmentSatisfaction']
-        radar_vars = [v for v in radar_vars if v in df_cluster.columns]
-        
-        # Normaliser les données pour le radar chart
-        radar_data = df_cluster.groupby('Cluster')[radar_vars].mean()
-        radar_normalized = (radar_data - radar_data.min()) / (radar_data.max() - radar_data.min())
-        
-        fig = go.Figure()
-        colors = px.colors.qualitative.Set2[:n_clusters]
-        
-        for i, cluster in enumerate(range(n_clusters)):
-            values = radar_normalized.loc[cluster].tolist()
-            values.append(values[0])  # Fermer le polygone
-            
-            fig.add_trace(go.Scatterpolar(
-                r=values,
-                theta=radar_vars + [radar_vars[0]],
-                fill='toself',
-                name=f'Cluster {cluster}',
-                line_color=colors[i],
-                opacity=0.6
-            ))
-        
-        fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-            title="<b>Comparaison des Profils de Clusters</b>",
-            height=600
-        )
-        st.plotly_chart(fig, width='stretch')
-        
         # Distributions comparatives
         st.markdown("### 📦 Distributions Comparatives par Variable")
         
