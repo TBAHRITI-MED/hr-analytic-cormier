@@ -773,15 +773,44 @@ def show_predictive_models(X, y, feature_cols):
     st.markdown('<div class="section-header"><h2>🤖 Modèles Prédictifs</h2></div>', unsafe_allow_html=True)
     
     st.markdown("""
-    Plusieurs modèles de Machine Learning ont été entraînés pour prédire le risque d'attrition.
-    Voici leurs performances et les facteurs les plus importants.
-    """)
+    <div class="insight-box">
+        <h4>🔬 Méthodologie</h4>
+        <p>Trois algorithmes de Machine Learning ont été entraînés et comparés pour prédire le risque d'attrition :</p>
+        <ul>
+            <li><b>Random Forest</b> — Ensemble d'arbres de décision, robuste au surapprentissage</li>
+            <li><b>Gradient Boosting</b> — Construction séquentielle d'arbres, optimise les erreurs résiduelles</li>
+            <li><b>Régression Logistique</b> — Modèle linéaire interprétable, sert de référence (baseline)</li>
+        </ul>
+        <p>Les données sont divisées en <b>80% entraînement / 20% test</b> avec stratification pour préserver la proportion de classes.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Entraînement des modèles
     with st.spinner("Entraînement des modèles en cours..."):
         results, X_train, X_test, y_train, y_test, scaler = train_models(X, y)
     
-    # Comparaison des modèles
+    # --- Métriques KPI en haut ---
+    st.markdown("### 📊 Performances Globales")
+    
+    best_model = max(results.items(), key=lambda x: x[1]['f1'])
+    best_name = best_model[0]
+    best_res = best_model[1]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("🏆 Meilleur Modèle", best_name)
+    with col2:
+        st.metric("🎯 F1-Score", f"{best_res['f1']:.3f}")
+    with col3:
+        st.metric("🔍 Recall", f"{best_res['recall']:.3f}")
+    with col4:
+        st.metric("✅ Précision", f"{best_res['precision']:.3f}")
+    
+    st.caption("Le **F1-Score** équilibre précision et rappel. Le **Recall** mesure la capacité à détecter les vrais départs (important pour ne rater aucun employé à risque).")
+    
+    st.markdown("---")
+    
+    # --- Comparaison des modèles ---
     st.markdown("### 📊 Comparaison des Modèles")
     
     comparison_data = []
@@ -796,125 +825,323 @@ def show_predictive_models(X, y, feature_cols):
     
     comparison_df = pd.DataFrame(comparison_data)
     
-    fig = go.Figure()
-    metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-    colors = ['#1d3557', '#457b9d', '#a8dadc', '#2a9d8f']
-    
-    for i, metric in enumerate(metrics):
-        fig.add_trace(go.Bar(
-            name=metric,
-            x=comparison_df['Modèle'],
-            y=comparison_df[metric],
-            marker_color=colors[i]
-        ))
-    
-    fig.update_layout(
-        title="<b>Comparaison des Performances des Modèles</b>",
-        barmode='group',
-        yaxis_title="Score",
-        legend_title="Métrique",
-        height=450
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Métriques détaillées
-    st.markdown("### 📋 Métriques Détaillées")
-    st.dataframe(comparison_df.set_index('Modèle').style.format("{:.3f}").background_gradient(cmap='Greens'))
-    
-    # Importance des features (Random Forest)
-    st.markdown("### 🎯 Importance des Variables (Random Forest)")
-    
-    rf_model = results['Random Forest']['model']
-    feature_importance = pd.DataFrame({
-        'Feature': feature_cols,
-        'Importance': rf_model.feature_importances_
-    }).sort_values('Importance', ascending=True).tail(15)
-    
-    fig = px.bar(
-        feature_importance,
-        x='Importance',
-        y='Feature',
-        orientation='h',
-        color='Importance',
-        color_continuous_scale=['#a8dadc', '#1d3557'],
-        title="<b>Top 15 Variables les Plus Importantes</b>"
-    )
-    fig.update_layout(
-        xaxis_title="Importance",
-        yaxis_title="Variable",
-        coloraxis_showscale=False,
-        height=500
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Courbe ROC
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 📈 Courbes ROC")
+        # Barres groupées
         fig = go.Figure()
+        metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+        colors = ['#1d3557', '#457b9d', '#a8dadc', '#2a9d8f']
         
-        for name, res in results.items():
+        for i, metric in enumerate(metrics):
+            fig.add_trace(go.Bar(
+                name=metric,
+                x=comparison_df['Modèle'],
+                y=comparison_df[metric],
+                marker_color=colors[i],
+                text=comparison_df[metric].apply(lambda v: f"{v:.2f}"),
+                textposition='outside'
+            ))
+        
+        fig.update_layout(
+            title="<b>Comparaison des Performances</b>",
+            barmode='group',
+            yaxis_title="Score",
+            yaxis_range=[0, 1.15],
+            legend_title="Métrique",
+            height=450
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Radar chart
+        fig = go.Figure()
+        radar_colors = ['#1d3557', '#e63946', '#2a9d8f']
+        
+        for idx, (name, res) in enumerate(results.items()):
+            values = [res['accuracy'], res['precision'], res['recall'], res['f1'], res['accuracy']]
+            fig.add_trace(go.Scatterpolar(
+                r=values,
+                theta=['Accuracy', 'Precision', 'Recall', 'F1-Score', 'Accuracy'],
+                fill='toself',
+                name=name,
+                line_color=radar_colors[idx],
+                opacity=0.6
+            ))
+        
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+            title="<b>Profil Radar des Modèles</b>",
+            height=450
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.caption("Le graphique radar permet de visualiser d'un coup d'œil les forces et faiblesses de chaque modèle sur les 4 métriques.")
+    
+    # Tableau des métriques
+    st.markdown("### 📋 Tableau Récapitulatif des Métriques")
+    st.dataframe(comparison_df.set_index('Modèle').style.format("{:.3f}").background_gradient(cmap='Greens'))
+    
+    st.markdown("---")
+    
+    # --- Validation croisée ---
+    st.markdown("### 🔄 Validation Croisée (5-Fold)")
+    st.caption("La validation croisée évalue la stabilité des modèles en les testant sur 5 sous-ensembles différents des données.")
+    
+    cv_data = []
+    for name, res in results.items():
+        model = res['model']
+        if name == 'Logistic Regression':
+            X_scaled = scaler.transform(X)
+            scores = cross_val_score(model, X_scaled, y, cv=5, scoring='f1')
+        else:
+            scores = cross_val_score(model, X, y, cv=5, scoring='f1')
+        for fold_idx, score in enumerate(scores):
+            cv_data.append({'Modèle': name, 'Fold': fold_idx + 1, 'F1-Score': score})
+    
+    cv_df = pd.DataFrame(cv_data)
+    
+    fig = px.box(
+        cv_df, x='Modèle', y='F1-Score', color='Modèle',
+        color_discrete_sequence=['#1d3557', '#e63946', '#2a9d8f'],
+        title="<b>Distribution du F1-Score par Validation Croisée (5-Fold)</b>",
+        points='all'
+    )
+    fig.update_layout(
+        yaxis_title="F1-Score",
+        showlegend=False,
+        height=400
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    cv_summary = cv_df.groupby('Modèle')['F1-Score'].agg(['mean', 'std']).round(3)
+    cv_summary.columns = ['F1 Moyen', 'Écart-type']
+    st.dataframe(cv_summary.style.background_gradient(cmap='Greens', subset=['F1 Moyen']))
+    st.caption("Un écart-type faible indique un modèle stable. Un F1 moyen élevé indique de bonnes performances générales.")
+    
+    st.markdown("---")
+    
+    # --- Importance des features ---
+    st.markdown("### 🎯 Importance des Variables")
+    st.caption("L'importance mesure la contribution de chaque variable à la prédiction. Plus la valeur est élevée, plus la variable influence la décision du modèle.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Random Forest
+        rf_model = results['Random Forest']['model']
+        rf_importance = pd.DataFrame({
+            'Feature': feature_cols,
+            'Importance': rf_model.feature_importances_
+        }).sort_values('Importance', ascending=True).tail(15)
+        
+        fig = px.bar(
+            rf_importance,
+            x='Importance',
+            y='Feature',
+            orientation='h',
+            color='Importance',
+            color_continuous_scale=['#a8dadc', '#1d3557'],
+            title="<b>Top 15 — Random Forest</b>"
+        )
+        fig.update_layout(
+            xaxis_title="Importance",
+            yaxis_title="",
+            coloraxis_showscale=False,
+            height=500
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Gradient Boosting
+        gb_model = results['Gradient Boosting']['model']
+        gb_importance = pd.DataFrame({
+            'Feature': feature_cols,
+            'Importance': gb_model.feature_importances_
+        }).sort_values('Importance', ascending=True).tail(15)
+        
+        fig = px.bar(
+            gb_importance,
+            x='Importance',
+            y='Feature',
+            orientation='h',
+            color='Importance',
+            color_continuous_scale=['#f4a261', '#e63946'],
+            title="<b>Top 15 — Gradient Boosting</b>"
+        )
+        fig.update_layout(
+            xaxis_title="Importance",
+            yaxis_title="",
+            coloraxis_showscale=False,
+            height=500
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Variables communes
+    rf_top = set(rf_importance.tail(10)['Feature'].values)
+    gb_top = set(gb_importance.tail(10)['Feature'].values)
+    common = rf_top & gb_top
+    st.info(f"📌 **Variables communes aux deux modèles (Top 10) :** {', '.join(sorted(common))}")
+    
+    st.markdown("---")
+    
+    # --- Courbes ROC et Precision-Recall ---
+    st.markdown("### 📈 Courbes d'Évaluation")
+    st.caption("Ces courbes mesurent la capacité discriminante du modèle : plus l'aire sous la courbe (AUC) est proche de 1, meilleur est le modèle.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig = go.Figure()
+        roc_colors = ['#1d3557', '#e63946', '#2a9d8f']
+        
+        for idx, (name, res) in enumerate(results.items()):
             fpr, tpr, _ = roc_curve(y_test, res['y_proba'])
             roc_auc = auc(fpr, tpr)
             fig.add_trace(go.Scatter(
                 x=fpr, y=tpr,
                 name=f'{name} (AUC = {roc_auc:.3f})',
-                mode='lines'
+                mode='lines',
+                line=dict(color=roc_colors[idx], width=2)
             ))
         
         fig.add_trace(go.Scatter(
             x=[0, 1], y=[0, 1],
-            name='Référence',
+            name='Aléatoire (AUC = 0.500)',
             mode='lines',
             line=dict(dash='dash', color='gray')
         ))
         
         fig.update_layout(
             title="<b>Courbes ROC</b>",
-            xaxis_title="Taux de Faux Positifs",
-            yaxis_title="Taux de Vrais Positifs",
+            xaxis_title="Taux de Faux Positifs (FPR)",
+            yaxis_title="Taux de Vrais Positifs (TPR)",
             height=450
         )
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        st.markdown("### 🎯 Matrice de Confusion (Random Forest)")
-        cm = confusion_matrix(y_test, results['Random Forest']['y_pred'])
+        fig = go.Figure()
         
-        fig = px.imshow(
-            cm,
-            labels=dict(x="Prédit", y="Réel", color="Nombre"),
-            x=['Resté', 'Parti'],
-            y=['Resté', 'Parti'],
-            color_continuous_scale='Blues',
-            text_auto=True
-        )
+        for idx, (name, res) in enumerate(results.items()):
+            prec, rec, _ = precision_recall_curve(y_test, res['y_proba'])
+            pr_auc = auc(rec, prec)
+            fig.add_trace(go.Scatter(
+                x=rec, y=prec,
+                name=f'{name} (AUC = {pr_auc:.3f})',
+                mode='lines',
+                line=dict(color=roc_colors[idx], width=2)
+            ))
+        
         fig.update_layout(
-            title="<b>Matrice de Confusion</b>",
+            title="<b>Courbes Précision-Rappel</b>",
+            xaxis_title="Rappel (Recall)",
+            yaxis_title="Précision",
             height=450
         )
         st.plotly_chart(fig, use_container_width=True)
     
-    # Interprétation
-    st.markdown("### 💡 Interprétation des Résultats")
+    st.caption("**ROC** : performance globale du classifieur. **Précision-Rappel** : plus adaptée aux données déséquilibrées (peu de départs vs beaucoup de maintiens).")
     
-    best_model = max(results.items(), key=lambda x: x[1]['f1'])
+    st.markdown("---")
+    
+    # --- Matrices de confusion ---
+    st.markdown("### 🎯 Matrices de Confusion")
+    st.caption("La matrice de confusion montre les prédictions correctes (diagonale) et les erreurs. Les faux négatifs (en bas à gauche) sont les départs non détectés.")
+    
+    cols = st.columns(3)
+    cm_colors = ['Blues', 'Reds', 'Greens']
+    
+    for idx, (name, res) in enumerate(results.items()):
+        with cols[idx]:
+            cm = confusion_matrix(y_test, res['y_pred'])
+            
+            fig = px.imshow(
+                cm,
+                labels=dict(x="Prédit", y="Réel", color="Nombre"),
+                x=['Resté', 'Parti'],
+                y=['Resté', 'Parti'],
+                color_continuous_scale=cm_colors[idx],
+                text_auto=True
+            )
+            fig.update_layout(
+                title=f"<b>{name}</b>",
+                height=350,
+                coloraxis_showscale=False
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            tn, fp, fn, tp = cm.ravel()
+            st.caption(f"VP={tp} | FP={fp} | FN={fn} | VN={tn}")
+    
+    st.markdown("---")
+    
+    # --- Distribution des probabilités prédites ---
+    st.markdown("### 📊 Distribution des Scores de Risque")
+    st.caption("Ce graphique montre comment le meilleur modèle répartit les probabilités de départ. Une bonne séparation entre les deux classes indique un modèle discriminant.")
+    
+    best_proba = results[best_name]['y_proba']
+    
+    proba_df = pd.DataFrame({
+        'Probabilité de départ': best_proba,
+        'Réalité': ['Parti' if v == 1 else 'Resté' for v in y_test]
+    })
+    
+    fig = px.histogram(
+        proba_df,
+        x='Probabilité de départ',
+        color='Réalité',
+        color_discrete_map={'Parti': '#e63946', 'Resté': '#2a9d8f'},
+        barmode='overlay',
+        opacity=0.7,
+        nbins=30,
+        title=f"<b>Distribution des Probabilités Prédites ({best_name})</b>"
+    )
+    fig.add_vline(x=0.5, line_dash="dash", line_color="black", annotation_text="Seuil = 0.5")
+    fig.update_layout(
+        xaxis_title="Probabilité prédite de départ",
+        yaxis_title="Nombre d'employés",
+        height=400
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        above_50 = (best_proba > 0.5).sum()
+        st.metric("Employés prédits à risque (>50%)", f"{above_50} / {len(best_proba)}")
+    with col2:
+        above_25 = ((best_proba > 0.25) & (best_proba <= 0.5)).sum()
+        st.metric("Zone de vigilance (25-50%)", f"{above_25} employés")
+    
+    st.markdown("---")
+    
+    # --- Interprétation finale ---
+    st.markdown("### 💡 Synthèse & Interprétation")
     
     st.success(f"""
-    **Meilleur modèle:** {best_model[0]}
-    - **F1-Score:** {best_model[1]['f1']:.3f}
-    - **Recall:** {best_model[1]['recall']:.3f} (capacité à détecter les départs)
-    - **Precision:** {best_model[1]['precision']:.3f} (fiabilité des prédictions)
+    **🏆 Meilleur modèle : {best_name}**
+    - **F1-Score : {best_res['f1']:.3f}** — bon équilibre entre précision et détection
+    - **Recall : {best_res['recall']:.3f}** — capacité à identifier les employés qui vont partir
+    - **Precision : {best_res['precision']:.3f}** — fiabilité des alertes générées
     """)
     
-    st.info("""
-    **Variables les plus impactantes pour l'attrition:**
-    1. **OverTime** - Les heures supplémentaires sont le facteur #1
-    2. **MonthlyIncome** - Un salaire bas augmente le risque
-    3. **Age** - Les jeunes employés sont plus susceptibles de partir
-    4. **YearsAtCompany** - Les nouveaux employés sont plus à risque
-    5. **JobSatisfaction** - Une faible satisfaction prédit le départ
+    st.markdown("""
+    <div class="insight-box">
+        <h4>📌 Points clés à retenir</h4>
+        <ul>
+            <li><b>OverTime</b> est le facteur prédictif n°1 — les heures supplémentaires multiplient le risque de départ</li>
+            <li><b>MonthlyIncome</b> — les salaires bas sont fortement corrélés à l'attrition</li>
+            <li><b>Age & Ancienneté</b> — les jeunes employés récents sont les plus volatils</li>
+            <li><b>JobSatisfaction</b> — une insatisfaction au travail est un signal d'alerte précoce</li>
+            <li><b>StockOptionLevel</b> — l'absence de stock options réduit l'engagement long terme</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.warning("""
+    ⚠️ **Limites à garder en tête :**  
+    Les données sont déséquilibrées (~16% de départs). Le Recall est la métrique prioritaire ici : 
+    il vaut mieux alerter sur un faux positif que de rater un vrai départ.
     """)
 
 
