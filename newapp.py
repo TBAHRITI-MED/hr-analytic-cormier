@@ -1021,36 +1021,6 @@ def show_segmentation(df_processed, X, y):
         
         st.caption("💡 Dans la vue 3D, vous pouvez pivoter la visualisation avec la souris pour explorer les clusters sous différents angles.")
         
-        # Heatmap des caractéristiques moyennes
-        st.markdown("### 🔥 Heatmap des Caractéristiques Moyennes par Cluster")
-        
-        # Sélection des variables clés
-        key_features = ['Age', 'MonthlyIncome', 'JobSatisfaction', 'EnvironmentSatisfaction',
-                       'WorkLifeBalance', 'YearsAtCompany', 'YearsInCurrentRole', 
-                       'DistanceFromHome', 'NumCompaniesWorked', 'TrainingTimesLastYear',
-                       'PercentSalaryHike', 'StockOptionLevel']
-        
-        available_features = [f for f in key_features if f in df_cluster.columns]
-        
-        # Calculer les moyennes par cluster (normalisées)
-        heatmap_data = df_cluster.groupby('Cluster')[available_features].mean()
-        # Normaliser entre 0 et 1 pour chaque variable
-        heatmap_normalized = (heatmap_data - heatmap_data.min()) / (heatmap_data.max() - heatmap_data.min())
-        
-        fig = px.imshow(
-            heatmap_normalized.T,
-            labels=dict(x="Cluster", y="Variable", color="Valeur Normalisée"),
-            x=[f'Cluster {i}' for i in range(n_clusters)],
-            y=available_features,
-            color_continuous_scale='RdYlGn',
-            aspect='auto',
-            title="<b>Profil Normalisé des Clusters</b>"
-        )
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, width='stretch')
-        
-        st.caption("🎯 Les couleurs vertes indiquent des valeurs élevées, les rouges des valeurs basses (par rapport aux autres clusters).")
-        
         # Distributions comparatives
         st.markdown("### 📦 Distributions Comparatives par Variable")
         
